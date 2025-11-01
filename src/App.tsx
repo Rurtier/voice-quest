@@ -219,11 +219,15 @@ function App() {
             console.error('❌ Speech recognition ERROR:', event.error)
             console.error('Error details:', event)
             
-            if (event.error === 'not-allowed') {
-              alert('Microphone access denied. Please:\n\n1. Go to Settings > Safari > Microphone\n2. Select "Ask" or "Allow"\n3. Reload this page\n4. Grant permission when prompted')
+            if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+              console.error('Permission or service denied')
+              
+              // Stop driving mode
               setDrivingMode(false)
               drivingModeActiveRef.current = false
               setIsListening(false)
+              
+              alert('Speech Recognition Blocked\n\nThis happens because iOS requires explicit permission.\n\nTo fix:\n\n1. Close this page completely\n2. Go to Settings > Safari > Advanced\n3. Look for "Experimental Features"\n4. Enable any speech-related features\n5. Reload this page\n6. When you click Driving mode, iOS should ask for permission\n\nAlternatively:\n• Try using Chrome on iOS instead of Safari\n• Or use the text input (always works!)')
             } else if (event.error === 'no-speech') {
               console.log('⚠️ No speech detected')
               if (drivingModeActiveRef.current && isIOS) {
@@ -367,7 +371,7 @@ function App() {
     synthRef.current.speak(utterance)
   }
 
-  const toggleDrivingMode = () => {
+  const toggleDrivingMode = async () => {
     console.log('=== toggleDrivingMode clicked ===')
     console.log('recognitionRef.current exists:', !!recognitionRef.current)
     console.log('Current drivingMode:', drivingMode)
@@ -388,6 +392,17 @@ function App() {
       // Enable speech output automatically in driving mode
       setSpeechEnabled(true)
       
+      // iOS requires explicit permission flow
+      // Show a prompt before starting
+      const userConfirmed = confirm('Driving Mode will:\n\n• Keep microphone active\n• Auto-send your voice commands\n• Read responses aloud\n\nAllow speech recognition?')
+      
+      if (!userConfirmed) {
+        console.log('User declined speech recognition')
+        setDrivingMode(false)
+        drivingModeActiveRef.current = false
+        return
+      }
+      
       // Start continuous listening
       try {
         console.log('Calling recognitionRef.current.start()...')
@@ -405,7 +420,13 @@ function App() {
         } else {
           setDrivingMode(false)
           drivingModeActiveRef.current = false
-          alert('Could not start driving mode: ' + e.message + '\n\nPlease:\n1. Reload the page\n2. Grant microphone permission when asked\n3. Try again')
+          
+          // Provide specific guidance based on error
+          if (e.message && e.message.includes('not-allowed')) {
+            alert('Speech recognition permission denied.\n\nTo fix:\n1. Go to Settings > Safari > Advanced\n2. Enable "Website Settings"\n3. Reload this page\n4. Allow microphone AND speech recognition when prompted')
+          } else {
+            alert('Could not start driving mode: ' + e.message + '\n\nPlease:\n1. Reload the page\n2. Grant ALL permissions when asked\n3. Try again')
+          }
         }
       }
     } else {
