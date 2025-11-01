@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Switch } from '@/components/ui/switch'
 import { 
   Sword, 
   Heart, 
@@ -22,7 +23,12 @@ import {
   ArrowLeft,
   Loader2,
   Trash2,
-  Download
+  Download,
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Settings
 } from 'lucide-react'
 import { initAuth } from './lib/firebase'
 import { saveGame, listSaves, deleteSave, type SavedGame } from './lib/gameStorage'
@@ -101,6 +107,17 @@ function App() {
   const [showSaveDialog, setShowSaveDialog] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   
+  // Voice control state
+  const [isListening, setIsListening] = useState(false)
+  const [voiceEnabled, setVoiceEnabled] = useState(false)
+  const [speechEnabled, setSpeechEnabled] = useState(false)
+  const [speechRate, setSpeechRate] = useState(1.0)
+  const [showSettings, setShowSettings] = useState(false)
+  
+  const recognitionRef = useRef<any>(null)
+  const synthRef = useRef<SpeechSynthesis | null>(null)
+  const lastSpokenRef = useRef<string>('')
+  
   const [gameState, setGameState] = useState<GameState>({
     characterName: '',
     genre: null,
@@ -119,6 +136,96 @@ function App() {
       setAuthReady(true)
     })
   }, [])
+
+  // Initialize speech synthesis
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+      synthRef.current = window.speechSynthesis
+    }
+  }, [])
+
+  // Initialize speech recognition
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      if (SpeechRecognition) {
+        recognitionRef.current = new SpeechRecognition()
+        recognitionRef.current.continuous = false
+        recognitionRef.current.interimResults = false
+        recognitionRef.current.lang = 'en-US'
+
+        recognitionRef.current.onresult = (event: any) => {
+          const transcript = event.results[0][0].transcript
+          setUserInput(transcript)
+          setIsListening(false)
+        }
+
+        recognitionRef.current.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error)
+          setIsListening(false)
+        }
+
+        recognitionRef.current.onend = () => {
+          setIsListening(false)
+        }
+      }
+    }
+
+    return () => {
+      if (recognitionRef.current) {
+        recognitionRef.current.stop()
+      }
+    }
+  }, [])
+
+  // Auto-speak new assistant messages
+  useEffect(() => {
+    if (!speechEnabled || !synthRef.current) return
+
+    const lastMessage = gameLog[gameLog.length - 1]
+    if (lastMessage && lastMessage.type === 'assistant' && lastMessage.content !== lastSpokenRef.current) {
+      lastSpokenRef.current = lastMessage.content
+      speakText(lastMessage.content)
+    }
+  }, [gameLog, speechEnabled])
+
+  const speakText = (text: string) => {
+    if (!synthRef.current) return
+
+    // Cancel any ongoing speech
+    synthRef.current.cancel()
+
+    const utterance = new SpeechSynthesisUtterance(text)
+    utterance.rate = speechRate
+    utterance.pitch = 1
+    utterance.volume = 1
+
+    synthRef.current.speak(utterance)
+  }
+
+  const toggleVoiceInput = () => {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in your browser.')
+      return
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop()
+      setIsListening(false)
+    } else {
+      setIsListening(true)
+      recognitionRef.current.start()
+    }
+  }
+
+  const toggleSpeechOutput = () => {
+    const newState = !speechEnabled
+    setSpeechEnabled(newState)
+    
+    if (!newState && synthRef.current) {
+      synthRef.current.cancel()
+    }
+  }
 
   const buildSystemPrompt = (state: GameState): string => {
     const genreData = genres.find(g => g.id === state.genre)
@@ -387,6 +494,9 @@ Now respond to the player's action as the Game Master.`
   }
 
   const handleBackToMenu = () => {
+    if (synthRef.current) {
+      synthRef.current.cancel()
+    }
     setScreen('main-menu')
     setSelectedGenre(null)
     setCharacterName('')
@@ -443,7 +553,7 @@ Now respond to the player's action as the Game Master.`
           </Card>
 
           <div className="text-center text-slate-500 text-sm">
-            Step 7 Complete: Firebase Save System ✓
+            Steps 5 & 6 Complete: Voice Control ✓
           </div>
         </div>
       </div>
@@ -647,7 +757,7 @@ Now respond to the player's action as the Game Master.`
     <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-4 md:p-8">
       <div className="max-w-4xl mx-auto space-y-4">
         {/* Header */}
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <div className="space-y-1">
             <h1 className="text-3xl font-bold text-amber-400 tracking-wide">
               {gameState.characterName}
@@ -657,6 +767,14 @@ Now respond to the player's action as the Game Master.`
             </p>
           </div>
           <div className="flex gap-2">
+            <Button
+              onClick={() => setShowSettings(true)}
+              variant="outline"
+              size="icon"
+              className="border-slate-700 text-slate-300 hover:text-white"
+            >
+              <Settings size={18} />
+            </Button>
             <Button
               onClick={() => setShowSaveDialog(true)}
               variant="outline"
@@ -675,6 +793,31 @@ Now respond to the player's action as the Game Master.`
             </Button>
           </div>
         </div>
+
+        {/* Voice Controls Banner */}
+        {(voiceEnabled || speechEnabled) && (
+          <Card className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 border-purple-700/50">
+            <CardContent className="py-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-4">
+                  {voiceEnabled && (
+                    <div className="flex items-center gap-2">
+                      <Mic className="text-purple-400" size={16} />
+                      <span className="text-sm text-purple-300">Voice Input: ON</span>
+                    </div>
+                  )}
+                  {speechEnabled && (
+                    <div className="flex items-center gap-2">
+                      <Volume2 className="text-blue-400" size={16} />
+                      <span className="text-sm text-blue-300">Voice Output: ON</span>
+                    </div>
+                  )}
+                </div>
+                <span className="text-xs text-slate-400">Configure in Settings</span>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Player Stats */}
         <Card className="bg-slate-800/50 border-slate-700">
@@ -787,7 +930,7 @@ Now respond to the player's action as the Game Master.`
           </CardContent>
         </Card>
 
-        {/* Input Area */}
+        {/* Input Area with Voice Controls */}
         <Card className="bg-slate-800/50 border-slate-700">
           <CardContent className="pt-6">
             <div className="space-y-3">
@@ -800,13 +943,33 @@ Now respond to the player's action as the Game Master.`
                     handleSendCommand()
                   }
                 }}
-                placeholder="Type your action... (e.g., 'look around', 'attack the goblin', 'open the chest')"
+                placeholder={isListening ? "Listening..." : "Type your action... or use the microphone button"}
                 className="bg-slate-900 border-slate-700 text-white placeholder:text-slate-500 min-h-20 resize-none"
+                disabled={isListening}
               />
               <div className="flex gap-2">
+                {recognitionRef.current && (
+                  <Button
+                    onClick={toggleVoiceInput}
+                    variant="outline"
+                    className={`border-slate-700 ${isListening ? 'bg-red-600 text-white border-red-600' : 'text-slate-300 hover:text-white'}`}
+                  >
+                    {isListening ? (
+                      <>
+                        <MicOff className="mr-2 animate-pulse" size={18} />
+                        Listening...
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="mr-2" size={18} />
+                        Voice
+                      </>
+                    )}
+                  </Button>
+                )}
                 <Button
                   onClick={handleSendCommand}
-                  disabled={isLoading || !userInput.trim()}
+                  disabled={isLoading || !userInput.trim() || isListening}
                   className="flex-1 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
                 >
                   {isLoading ? (
@@ -828,9 +991,87 @@ Now respond to the player's action as the Game Master.`
 
         {/* Footer */}
         <div className="text-center text-slate-500 text-sm">
-          Step 7 Complete: Firebase Save System ✓ | Next: Voice Control
+          Steps 5 & 6 Complete: Voice Control ✓ | Full Experience Enabled
         </div>
       </div>
+
+      {/* Settings Dialog */}
+      <Dialog open={showSettings} onOpenChange={setShowSettings}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-amber-400">Voice Settings</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              Configure voice input and output preferences
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-6">
+            {/* Voice Input Toggle */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Mic className="text-purple-400" size={18} />
+                  <Label className="text-slate-200">Voice Input</Label>
+                </div>
+                <p className="text-xs text-slate-400">Speak your commands using the microphone</p>
+              </div>
+              <Switch
+                checked={voiceEnabled}
+                onCheckedChange={setVoiceEnabled}
+                disabled={!recognitionRef.current}
+              />
+            </div>
+
+            {/* Voice Output Toggle */}
+            <div className="flex items-center justify-between">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <Volume2 className="text-blue-400" size={18} />
+                  <Label className="text-slate-200">Voice Output</Label>
+                </div>
+                <p className="text-xs text-slate-400">Hear the story read aloud automatically</p>
+              </div>
+              <Switch
+                checked={speechEnabled}
+                onCheckedChange={toggleSpeechOutput}
+                disabled={!synthRef.current}
+              />
+            </div>
+
+            {/* Speech Rate Slider */}
+            {speechEnabled && (
+              <div className="space-y-2">
+                <Label className="text-slate-200">Speech Speed: {speechRate.toFixed(1)}x</Label>
+                <input
+                  type="range"
+                  min="0.5"
+                  max="2"
+                  step="0.1"
+                  value={speechRate}
+                  onChange={(e) => setSpeechRate(parseFloat(e.target.value))}
+                  className="w-full"
+                />
+                <p className="text-xs text-slate-400">Adjust how fast the story is read aloud</p>
+              </div>
+            )}
+
+            {/* Browser Support Info */}
+            <div className="pt-4 border-t border-slate-700 space-y-2">
+              <p className="text-xs text-slate-400">
+                {!recognitionRef.current && '⚠️ Voice input not supported in this browser'}
+                {!synthRef.current && '⚠️ Voice output not supported in this browser'}
+                {recognitionRef.current && synthRef.current && '✓ All voice features supported'}
+              </p>
+            </div>
+
+            <Button
+              onClick={() => setShowSettings(false)}
+              className="w-full bg-amber-600 hover:bg-amber-700"
+            >
+              Done
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Save Dialog */}
       <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
