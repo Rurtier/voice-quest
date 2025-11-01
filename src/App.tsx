@@ -112,10 +112,12 @@ function App() {
   const [speechEnabled, setSpeechEnabled] = useState(false)
   const [speechRate, setSpeechRate] = useState(1.0)
   const [showSettings, setShowSettings] = useState(false)
+  const [drivingMode, setDrivingMode] = useState(false)
   
   const recognitionRef = useRef<any>(null)
   const synthRef = useRef<SpeechSynthesis | null>(null)
   const lastSpokenRef = useRef<string>('')
+  const drivingModeActiveRef = useRef(false)
   
   const [gameState, setGameState] = useState<GameState>({
     characterName: '',
@@ -149,7 +151,7 @@ function App() {
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
       if (SpeechRecognition) {
         recognitionRef.current = new SpeechRecognition()
-        recognitionRef.current.continuous = false
+        recognitionRef.current.continuous = true // Changed to true for driving mode
         recognitionRef.current.interimResults = false
         recognitionRef.current.lang = 'en-US'
         recognitionRef.current.maxAlternatives = 1
@@ -160,25 +162,72 @@ function App() {
         }
 
         recognitionRef.current.onresult = (event: any) => {
-          const transcript = event.results[0][0].transcript
+          const transcript = event.results[event.results.length - 1][0].transcript
           console.log('Transcript:', transcript)
           setUserInput(transcript)
-          setIsListening(false)
+          
+          // In driving mode, auto-send after getting transcript
+          if (drivingModeActiveRef.current) {
+            setTimeout(() => {
+              // Trigger send command
+              const sendButton = document.querySelector('[data-send-command]') as HTMLButtonElement
+              if (sendButton && transcript.trim()) {
+                sendButton.click()
+              }
+            }, 500)
+          } else {
+            setIsListening(false)
+          }
         }
 
         recognitionRef.current.onerror = (event: any) => {
           console.error('Speech recognition error:', event.error)
           if (event.error === 'not-allowed') {
             alert('Microphone access denied. Please enable microphone permissions in your browser settings.')
+            setDrivingMode(false)
+            drivingModeActiveRef.current = false
           } else if (event.error === 'no-speech') {
-            alert('No speech detected. Please try again.')
+            // In driving mode, just continue listening
+            if (drivingModeActiveRef.current) {
+              console.log('No speech detected, continuing to listen...')
+            } else {
+              alert('No speech detected. Please try again.')
+            }
+          } else if (event.error === 'aborted') {
+            // Restart if in driving mode
+            if (drivingModeActiveRef.current) {
+              setTimeout(() => {
+                try {
+                  recognitionRef.current?.start()
+                } catch (e) {
+                  console.error('Error restarting:', e)
+                }
+              }, 100)
+            }
           }
-          setIsListening(false)
+          
+          if (!drivingModeActiveRef.current) {
+            setIsListening(false)
+          }
         }
 
         recognitionRef.current.onend = () => {
           console.log('Speech recognition ended')
-          setIsListening(false)
+          // In driving mode, restart recognition
+          if (drivingModeActiveRef.current) {
+            setTimeout(() => {
+              try {
+                recognitionRef.current?.start()
+              } catch (e) {
+                console.error('Error restarting in driving mode:', e)
+                setDrivingMode(false)
+                drivingModeActiveRef.current = false
+                setIsListening(false)
+              }
+            }, 100)
+          } else {
+            setIsListening(false)
+          }
         }
       }
     }
@@ -217,6 +266,46 @@ function App() {
     utterance.volume = 1
 
     synthRef.current.speak(utterance)
+  }
+
+  const toggleDrivingMode = () => {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in your browser. Try Chrome or Safari.')
+      return
+    }
+
+    const newDrivingMode = !drivingMode
+    setDrivingMode(newDrivingMode)
+    drivingModeActiveRef.current = newDrivingMode
+
+    if (newDrivingMode) {
+      // Enable speech output automatically in driving mode
+      setSpeechEnabled(true)
+      
+      // Start continuous listening
+      try {
+        recognitionRef.current.start()
+        setIsListening(true)
+      } catch (e: any) {
+        console.error('Error starting driving mode:', e)
+        if (e.message && e.message.includes('already started')) {
+          setIsListening(true)
+        } else {
+          setDrivingMode(false)
+          drivingModeActiveRef.current = false
+          alert('Could not start driving mode. Please check your microphone permissions.')
+        }
+      }
+    } else {
+      // Stop listening
+      try {
+        recognitionRef.current.stop()
+        setIsListening(false)
+      } catch (e) {
+        console.error('Error stopping driving mode:', e)
+        setIsListening(false)
+      }
+    }
   }
 
   const toggleVoiceInput = () => {
@@ -836,12 +925,18 @@ Now respond to the player's action as the Game Master.`
         </div>
 
         {/* Voice Controls Banner */}
-        {(voiceEnabled || speechEnabled) && (
+        {(voiceEnabled || speechEnabled || drivingMode) && (
           <Card className="bg-gradient-to-r from-purple-900/30 to-blue-900/30 border-purple-700/50">
             <CardContent className="py-3">
               <div className="flex items-center justify-between flex-wrap gap-2">
                 <div className="flex items-center gap-4">
-                  {voiceEnabled && (
+                  {drivingMode && (
+                    <div className="flex items-center gap-2">
+                      <Mic className="text-green-400 animate-pulse" size={16} />
+                      <span className="text-sm text-green-300 font-bold">🚗 DRIVING MODE: Always Listening</span>
+                    </div>
+                  )}
+                  {!drivingMode && voiceEnabled && (
                     <div className="flex items-center gap-2">
                       <Mic className="text-purple-400" size={16} />
                       <span className="text-sm text-purple-300">Voice Input: ON</span>
@@ -989,7 +1084,7 @@ Now respond to the player's action as the Game Master.`
                 disabled={isListening}
               />
               <div className="flex gap-2">
-                {recognitionRef.current && (
+                {recognitionRef.current && !drivingMode && (
                   <Button
                     onClick={toggleVoiceInput}
                     variant="outline"
@@ -1008,9 +1103,29 @@ Now respond to the player's action as the Game Master.`
                     )}
                   </Button>
                 )}
+                {recognitionRef.current && (
+                  <Button
+                    onClick={toggleDrivingMode}
+                    variant="outline"
+                    className={`border-slate-700 ${drivingMode ? 'bg-green-600 text-white border-green-600' : 'text-slate-300 hover:text-white'}`}
+                  >
+                    {drivingMode ? (
+                      <>
+                        <MicOff className="mr-2 animate-pulse" size={18} />
+                        Driving ON
+                      </>
+                    ) : (
+                      <>
+                        <Mic className="mr-2" size={18} />
+                        Driving
+                      </>
+                    )}
+                  </Button>
+                )}
                 <Button
+                  data-send-command
                   onClick={handleSendCommand}
-                  disabled={isLoading || !userInput.trim() || isListening}
+                  disabled={isLoading || !userInput.trim() || (isListening && !drivingMode)}
                   className="flex-1 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
                 >
                   {isLoading ? (
@@ -1076,6 +1191,25 @@ Now respond to the player's action as the Game Master.`
                 onCheckedChange={toggleSpeechOutput}
                 disabled={!synthRef.current}
               />
+            </div>
+
+            {/* Driving Mode Info */}
+            <div className="pt-4 border-t border-slate-700">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <span className="text-2xl">🚗</span>
+                  <Label className="text-slate-200 text-lg">Driving Mode</Label>
+                </div>
+                <p className="text-sm text-slate-300">
+                  For hands-free operation, use the <strong className="text-green-400">"Driving"</strong> button in the game.
+                </p>
+                <ul className="text-xs text-slate-400 space-y-1 ml-4 list-disc">
+                  <li>Mic stays on continuously</li>
+                  <li>Commands auto-send after speech</li>
+                  <li>Voice output enabled automatically</li>
+                  <li>Perfect for iPhone and driving!</li>
+                </ul>
+              </div>
             </div>
 
             {/* Speech Rate Slider */}
