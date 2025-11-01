@@ -148,154 +148,195 @@ function App() {
   // Initialize speech recognition
   useEffect(() => {
     if (typeof window !== 'undefined') {
+      console.log('=== Speech Recognition Initialization ===')
+      console.log('User Agent:', navigator.userAgent)
+      console.log('Platform:', navigator.platform)
+      console.log('Max Touch Points:', navigator.maxTouchPoints)
+      
       const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+      console.log('SpeechRecognition available:', !!SpeechRecognition)
+      console.log('SpeechRecognition type:', SpeechRecognition ? 'webkitSpeechRecognition' : 'not found')
+      
       if (SpeechRecognition) {
         // Detect iOS
         const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || 
                       (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
         
-        console.log('Initializing speech recognition. iOS detected:', isIOS)
+        console.log('iOS detected:', isIOS)
         
-        recognitionRef.current = new SpeechRecognition()
-        // CRITICAL: iOS Safari doesn't support continuous mode properly
-        recognitionRef.current.continuous = !isIOS // false for iOS, true for others
-        recognitionRef.current.interimResults = false
-        recognitionRef.current.lang = 'en-US'
-        recognitionRef.current.maxAlternatives = 1
-
-        recognitionRef.current.onstart = () => {
-          console.log('Speech recognition started')
-          setIsListening(true)
-        }
-
-        recognitionRef.current.onresult = (event: any) => {
-          console.log('Speech recognition result event:', event)
-          const lastResultIndex = event.results.length - 1
-          const transcript = event.results[lastResultIndex][0].transcript
-          console.log('Transcript received:', transcript)
-          console.log('Confidence:', event.results[lastResultIndex][0].confidence)
+        try {
+          recognitionRef.current = new SpeechRecognition()
+          console.log('SpeechRecognition object created successfully')
           
-          setUserInput(transcript)
+          // CRITICAL: iOS Safari doesn't support continuous mode properly
+          recognitionRef.current.continuous = !isIOS // false for iOS, true for others
+          recognitionRef.current.interimResults = false
+          recognitionRef.current.lang = 'en-US'
+          recognitionRef.current.maxAlternatives = 1
           
-          // In driving mode, auto-send after getting transcript
-          if (drivingModeActiveRef.current) {
-            setTimeout(() => {
-              // Trigger send command
-              const sendButton = document.querySelector('[data-send-command]') as HTMLButtonElement
-              if (sendButton && transcript.trim()) {
-                console.log('Auto-sending command in driving mode')
-                sendButton.click()
-              }
-            }, 800) // Increased timeout for iOS
-          } else {
-            setIsListening(false)
+          console.log('Recognition settings:')
+          console.log('- continuous:', recognitionRef.current.continuous)
+          console.log('- interimResults:', recognitionRef.current.interimResults)
+          console.log('- lang:', recognitionRef.current.lang)
+
+          recognitionRef.current.onstart = () => {
+            console.log('✅ Speech recognition STARTED')
+            setIsListening(true)
           }
-        }
 
-        recognitionRef.current.onerror = (event: any) => {
-          console.error('Speech recognition error:', event.error, event)
-          if (event.error === 'not-allowed') {
-            alert('Microphone access denied. Please enable microphone permissions in Settings > Safari > Microphone.')
-            setDrivingMode(false)
-            drivingModeActiveRef.current = false
-            setIsListening(false)
-          } else if (event.error === 'no-speech') {
-            console.log('No speech detected')
-            // In driving mode on iOS, we need to manually restart
-            if (drivingModeActiveRef.current && isIOS) {
+          recognitionRef.current.onresult = (event: any) => {
+            console.log('✅ Speech recognition RESULT received')
+            console.log('Event:', event)
+            console.log('Results length:', event.results.length)
+            
+            const lastResultIndex = event.results.length - 1
+            const result = event.results[lastResultIndex]
+            const transcript = result[0].transcript
+            const confidence = result[0].confidence
+            
+            console.log('Transcript:', transcript)
+            console.log('Confidence:', confidence)
+            console.log('Is final:', result.isFinal)
+            
+            setUserInput(transcript)
+            
+            // In driving mode, auto-send after getting transcript
+            if (drivingModeActiveRef.current) {
+              console.log('Driving mode active, will auto-send in 800ms')
+              setTimeout(() => {
+                const sendButton = document.querySelector('[data-send-command]') as HTMLButtonElement
+                if (sendButton && transcript.trim()) {
+                  console.log('Auto-clicking send button')
+                  sendButton.click()
+                }
+              }, 800)
+            } else {
+              setIsListening(false)
+            }
+          }
+
+          recognitionRef.current.onerror = (event: any) => {
+            console.error('❌ Speech recognition ERROR:', event.error)
+            console.error('Error details:', event)
+            
+            if (event.error === 'not-allowed') {
+              alert('Microphone access denied. Please:\n\n1. Go to Settings > Safari > Microphone\n2. Select "Ask" or "Allow"\n3. Reload this page\n4. Grant permission when prompted')
+              setDrivingMode(false)
+              drivingModeActiveRef.current = false
+              setIsListening(false)
+            } else if (event.error === 'no-speech') {
+              console.log('⚠️ No speech detected')
+              if (drivingModeActiveRef.current && isIOS) {
+                console.log('Restarting for iOS driving mode...')
+                setTimeout(() => {
+                  try {
+                    if (recognitionRef.current) {
+                      recognitionRef.current.start()
+                    }
+                  } catch (e) {
+                    console.error('Error restarting after no-speech:', e)
+                  }
+                }, 300)
+              } else if (!drivingModeActiveRef.current) {
+                setIsListening(false)
+              }
+            } else if (event.error === 'aborted') {
+              console.log('⚠️ Recognition aborted')
+              if (drivingModeActiveRef.current) {
+                setTimeout(() => {
+                  try {
+                    recognitionRef.current?.start()
+                  } catch (e) {
+                    console.error('Error restarting after abort:', e)
+                  }
+                }, 300)
+              } else {
+                setIsListening(false)
+              }
+            } else if (event.error === 'audio-capture') {
+              console.error('❌ Audio capture failed - mic not available or permission denied')
+              alert('Could not access microphone. Please check:\n\n1. Microphone is not being used by another app\n2. Safari has microphone permission\n3. Try closing other apps using the microphone')
+              setDrivingMode(false)
+              drivingModeActiveRef.current = false
+              setIsListening(false)
+            } else if (event.error === 'network') {
+              console.error('❌ Network error - check internet connection')
+              alert('Network error. Speech recognition requires an internet connection.')
+              setIsListening(false)
+            } else {
+              console.error('❌ Unhandled recognition error:', event.error)
+              if (!drivingModeActiveRef.current) {
+                setIsListening(false)
+              }
+            }
+          }
+
+          recognitionRef.current.onend = () => {
+            console.log('⚠️ Speech recognition ENDED')
+            if (drivingModeActiveRef.current) {
+              console.log('Driving mode still active, restarting in 300ms...')
               setTimeout(() => {
                 try {
-                  if (recognitionRef.current) {
+                  if (recognitionRef.current && drivingModeActiveRef.current) {
+                    console.log('Attempting to restart recognition...')
                     recognitionRef.current.start()
                   }
                 } catch (e) {
-                  console.error('Error restarting after no-speech:', e)
-                }
-              }, 300)
-            } else if (!drivingModeActiveRef.current) {
-              setIsListening(false)
-            }
-          } else if (event.error === 'aborted') {
-            console.log('Recognition aborted')
-            // Restart if in driving mode
-            if (drivingModeActiveRef.current) {
-              setTimeout(() => {
-                try {
-                  recognitionRef.current?.start()
-                } catch (e) {
-                  console.error('Error restarting after abort:', e)
+                  console.error('Error restarting in driving mode:', e)
+                  setDrivingMode(false)
+                  drivingModeActiveRef.current = false
+                  setIsListening(false)
                 }
               }, 300)
             } else {
               setIsListening(false)
             }
-          } else {
-            console.error('Unhandled recognition error:', event.error)
-            if (!drivingModeActiveRef.current) {
-              setIsListening(false)
-            }
           }
-        }
 
-        recognitionRef.current.onend = () => {
-          console.log('Speech recognition ended')
-          // In driving mode, restart recognition (especially important for iOS)
-          if (drivingModeActiveRef.current) {
-            setTimeout(() => {
-              try {
-                if (recognitionRef.current) {
-                  console.log('Restarting recognition in driving mode')
-                  recognitionRef.current.start()
-                }
-              } catch (e) {
-                console.error('Error restarting in driving mode:', e)
-                setDrivingMode(false)
-                drivingModeActiveRef.current = false
-                setIsListening(false)
-              }
-            }, 300) // Increased timeout for iOS
-          } else {
-            setIsListening(false)
-          }
-        }
-
-        // iOS-specific: add audio start/end handlers for debugging
-        if (isIOS) {
+          // iOS-specific: add all event handlers for comprehensive debugging
           recognitionRef.current.onaudiostart = () => {
-            console.log('Audio capture started (iOS)')
+            console.log('🎤 Audio capture STARTED')
           }
           
           recognitionRef.current.onaudioend = () => {
-            console.log('Audio capture ended (iOS)')
+            console.log('🎤 Audio capture ENDED')
           }
           
           recognitionRef.current.onsoundstart = () => {
-            console.log('Sound detected (iOS)')
+            console.log('🔊 Sound DETECTED')
           }
           
           recognitionRef.current.onsoundend = () => {
-            console.log('Sound ended (iOS)')
+            console.log('🔊 Sound ENDED')
           }
           
           recognitionRef.current.onspeechstart = () => {
-            console.log('Speech started (iOS)')
+            console.log('💬 Speech STARTED')
           }
           
           recognitionRef.current.onspeechend = () => {
-            console.log('Speech ended (iOS)')
+            console.log('💬 Speech ENDED')
           }
+          
+          console.log('All event handlers attached successfully')
+          
+        } catch (error) {
+          console.error('Failed to create SpeechRecognition:', error)
+          alert('Failed to initialize speech recognition: ' + error)
         }
       } else {
-        console.error('Speech recognition not supported')
+        console.error('❌ Speech recognition NOT available in this browser')
+        alert('Speech recognition is not supported in this browser.\n\nPlease use:\n- Safari on iOS 14.5+\n- Chrome on desktop\n- Edge on desktop')
       }
     }
 
     return () => {
       if (recognitionRef.current) {
         try {
+          console.log('Cleaning up speech recognition')
           recognitionRef.current.stop()
         } catch (e) {
-          // Ignore errors on cleanup
+          console.log('Error during cleanup (can be ignored):', e)
         }
       }
     }
@@ -327,37 +368,52 @@ function App() {
   }
 
   const toggleDrivingMode = () => {
+    console.log('=== toggleDrivingMode clicked ===')
+    console.log('recognitionRef.current exists:', !!recognitionRef.current)
+    console.log('Current drivingMode:', drivingMode)
+    
     if (!recognitionRef.current) {
+      console.error('Recognition not initialized!')
       alert('Speech recognition is not supported in your browser. Try Chrome or Safari.')
       return
     }
 
     const newDrivingMode = !drivingMode
+    console.log('Setting driving mode to:', newDrivingMode)
     setDrivingMode(newDrivingMode)
     drivingModeActiveRef.current = newDrivingMode
 
     if (newDrivingMode) {
+      console.log('Starting driving mode...')
       // Enable speech output automatically in driving mode
       setSpeechEnabled(true)
       
       // Start continuous listening
       try {
+        console.log('Calling recognitionRef.current.start()...')
         recognitionRef.current.start()
+        console.log('✅ Start called successfully')
         setIsListening(true)
       } catch (e: any) {
-        console.error('Error starting driving mode:', e)
+        console.error('❌ Error starting driving mode:', e)
+        console.error('Error message:', e.message)
+        console.error('Error name:', e.name)
+        
         if (e.message && e.message.includes('already started')) {
+          console.log('Recognition already started, setting isListening to true')
           setIsListening(true)
         } else {
           setDrivingMode(false)
           drivingModeActiveRef.current = false
-          alert('Could not start driving mode. Please check your microphone permissions.')
+          alert('Could not start driving mode: ' + e.message + '\n\nPlease:\n1. Reload the page\n2. Grant microphone permission when asked\n3. Try again')
         }
       }
     } else {
+      console.log('Stopping driving mode...')
       // Stop listening
       try {
         recognitionRef.current.stop()
+        console.log('✅ Stop called successfully')
         setIsListening(false)
       } catch (e) {
         console.error('Error stopping driving mode:', e)
