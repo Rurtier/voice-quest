@@ -27,7 +27,6 @@ import {
   Mic,
   MicOff,
   Volume2,
-  VolumeX,
   Settings
 } from 'lucide-react'
 import { initAuth } from './lib/firebase'
