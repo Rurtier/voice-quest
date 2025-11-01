@@ -22,11 +22,10 @@ import {
   ArrowLeft,
   Loader2,
   Trash2,
-  Download,
-  Upload
+  Download
 } from 'lucide-react'
 import { initAuth } from './lib/firebase'
-import { saveGame, loadGame, listSaves, deleteSave, SavedGame } from './lib/gameStorage'
+import { saveGame, loadGame, listSaves, deleteSave, type SavedGame } from './lib/gameStorage'
 
 type GameScreen = 'main-menu' | 'genre-selection' | 'character-creation' | 'playing' | 'load-game'
 type Genre = 'fantasy' | 'scifi' | 'mystery' | 'horror' | 'post-apocalyptic' | 'cyberpunk'
