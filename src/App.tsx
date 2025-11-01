@@ -152,19 +152,32 @@ function App() {
         recognitionRef.current.continuous = false
         recognitionRef.current.interimResults = false
         recognitionRef.current.lang = 'en-US'
+        recognitionRef.current.maxAlternatives = 1
+
+        recognitionRef.current.onstart = () => {
+          console.log('Speech recognition started')
+          setIsListening(true)
+        }
 
         recognitionRef.current.onresult = (event: any) => {
           const transcript = event.results[0][0].transcript
+          console.log('Transcript:', transcript)
           setUserInput(transcript)
           setIsListening(false)
         }
 
         recognitionRef.current.onerror = (event: any) => {
           console.error('Speech recognition error:', event.error)
+          if (event.error === 'not-allowed') {
+            alert('Microphone access denied. Please enable microphone permissions in your browser settings.')
+          } else if (event.error === 'no-speech') {
+            alert('No speech detected. Please try again.')
+          }
           setIsListening(false)
         }
 
         recognitionRef.current.onend = () => {
+          console.log('Speech recognition ended')
           setIsListening(false)
         }
       }
@@ -172,7 +185,11 @@ function App() {
 
     return () => {
       if (recognitionRef.current) {
-        recognitionRef.current.stop()
+        try {
+          recognitionRef.current.stop()
+        } catch (e) {
+          // Ignore errors on cleanup
+        }
       }
     }
   }, [])
@@ -204,16 +221,41 @@ function App() {
 
   const toggleVoiceInput = () => {
     if (!recognitionRef.current) {
-      alert('Speech recognition is not supported in your browser.')
+      alert('Speech recognition is not supported in your browser. Try Chrome or Safari.')
       return
     }
 
     if (isListening) {
-      recognitionRef.current.stop()
-      setIsListening(false)
+      try {
+        recognitionRef.current.stop()
+        setIsListening(false)
+      } catch (e) {
+        console.error('Error stopping recognition:', e)
+        setIsListening(false)
+      }
     } else {
-      setIsListening(true)
-      recognitionRef.current.start()
+      try {
+        // iOS Safari requires user gesture to start
+        setIsListening(true)
+        recognitionRef.current.start()
+      } catch (e: any) {
+        console.error('Error starting recognition:', e)
+        if (e.message && e.message.includes('already started')) {
+          // Recognition is already running, stop and restart
+          recognitionRef.current.stop()
+          setTimeout(() => {
+            try {
+              recognitionRef.current.start()
+            } catch (err) {
+              console.error('Error restarting:', err)
+              setIsListening(false)
+            }
+          }, 100)
+        } else {
+          setIsListening(false)
+          alert('Could not start voice recognition. Please check your microphone permissions.')
+        }
+      }
     }
   }
 
