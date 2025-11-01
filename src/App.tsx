@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -6,12 +6,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Badge } from '@/components/ui/badge'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { 
   Sword, 
   Heart, 
   Package, 
   Play, 
-  Save, 
+  Save as SaveIcon, 
   Sparkles,
   Zap,
   Brain,
@@ -19,13 +20,18 @@ import {
   Globe,
   Cpu,
   ArrowLeft,
-  Loader2
+  Loader2,
+  Trash2,
+  Download,
+  Upload
 } from 'lucide-react'
+import { initAuth } from './lib/firebase'
+import { saveGame, loadGame, listSaves, deleteSave, SavedGame } from './lib/gameStorage'
 
-type GameScreen = 'main-menu' | 'genre-selection' | 'character-creation' | 'playing'
+type GameScreen = 'main-menu' | 'genre-selection' | 'character-creation' | 'playing' | 'load-game'
 type Genre = 'fantasy' | 'scifi' | 'mystery' | 'horror' | 'post-apocalyptic' | 'cyberpunk'
 
-interface GameState {
+export interface GameState {
   characterName: string
   genre: Genre | null
   health: number
@@ -90,6 +96,11 @@ function App() {
   const [gameLog, setGameLog] = useState<Array<{ type: 'system' | 'user' | 'assistant', content: string }>>([])
   const [isLoading, setIsLoading] = useState(false)
   const [conversationHistory, setConversationHistory] = useState<Array<{ role: 'user' | 'assistant', content: string }>>([])
+  const [authReady, setAuthReady] = useState(false)
+  const [savedGames, setSavedGames] = useState<SavedGame[]>([])
+  const [currentSaveId, setCurrentSaveId] = useState<string | null>(null)
+  const [showSaveDialog, setShowSaveDialog] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   
   const [gameState, setGameState] = useState<GameState>({
     characterName: '',
@@ -102,6 +113,13 @@ function App() {
     inventory: [],
     level: 1
   })
+
+  // Initialize Firebase auth on mount
+  useEffect(() => {
+    initAuth().then(() => {
+      setAuthReady(true)
+    })
+  }, [])
 
   const buildSystemPrompt = (state: GameState): string => {
     const genreData = genres.find(g => g.id === state.genre)
@@ -135,7 +153,6 @@ Now respond to the player's action as the Game Master.`
   }
 
   const parseAndUpdateGameState = (response: string) => {
-    // Simple parsing for damage (we'll make this more sophisticated later)
     const damageMatch = response.match(/(?:take|took|lose|lost)\s+(\d+)\s+(?:damage|health)/i)
     if (damageMatch) {
       const damage = parseInt(damageMatch[1])
@@ -145,7 +162,6 @@ Now respond to the player's action as the Game Master.`
       }))
     }
 
-    // Parse for healing
     const healMatch = response.match(/(?:heal|restore|gain|recover)\s+(\d+)\s+(?:health|hp)/i)
     if (healMatch) {
       const healing = parseInt(healMatch[1])
@@ -155,7 +171,6 @@ Now respond to the player's action as the Game Master.`
       }))
     }
 
-    // Parse for gold found
     const goldFoundMatch = response.match(/(?:find|found|discover|gain)\s+(\d+)\s+gold/i)
     if (goldFoundMatch) {
       const gold = parseInt(goldFoundMatch[1])
@@ -165,7 +180,6 @@ Now respond to the player's action as the Game Master.`
       }))
     }
 
-    // Parse for gold spent
     const goldSpentMatch = response.match(/(?:spend|spent|pay|paid|cost)\s+(\d+)\s+gold/i)
     if (goldSpentMatch) {
       const gold = parseInt(goldSpentMatch[1])
@@ -175,11 +189,9 @@ Now respond to the player's action as the Game Master.`
       }))
     }
 
-    // Parse for items found (simple version - looks for "find/found [item name]")
     const itemMatch = response.match(/(?:find|found|discover|obtain|get)\s+(?:a|an|the)\s+([A-Z][a-zA-Z\s]+?)(?:\s+and|\s+in|\.|\!)/i)
     if (itemMatch) {
       const item = itemMatch[1].trim()
-      // Only add if it looks like an item (not too long, capitalized)
       if (item.length < 30 && item.length > 3) {
         setGameState(prev => ({
           ...prev,
@@ -196,20 +208,16 @@ Now respond to the player's action as the Game Master.`
     setUserInput('')
     setIsLoading(true)
 
-    // Add user message to log
     setGameLog(prev => [...prev, { type: 'user', content: userCommand }])
 
     try {
-      // Build the system prompt based on genre and game state
       const systemPrompt = buildSystemPrompt(gameState)
 
-      // Build conversation messages
       const messages = [
         ...conversationHistory,
         { role: 'user' as const, content: userCommand }
       ]
 
-      // Call Claude API
       const response = await fetch("/api/claude", {
         method: "POST",
         headers: {
@@ -230,17 +238,14 @@ Now respond to the player's action as the Game Master.`
       const data = await response.json()
       const assistantResponse = data.content[0].text
 
-      // Add assistant response to log
       setGameLog(prev => [...prev, { type: 'assistant', content: assistantResponse }])
 
-      // Update conversation history
       setConversationHistory(prev => [
         ...prev,
         { role: 'user', content: userCommand },
         { role: 'assistant', content: assistantResponse }
       ])
 
-      // Parse response for game state updates
       parseAndUpdateGameState(assistantResponse)
 
     } catch (error) {
@@ -251,6 +256,82 @@ Now respond to the player's action as the Game Master.`
       }])
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleSaveGame = async () => {
+    if (!authReady) {
+      alert('Authentication not ready. Please wait a moment and try again.')
+      return
+    }
+
+    setIsSaving(true)
+    try {
+      const saveId = await saveGame(gameState, conversationHistory, gameLog, currentSaveId)
+      setCurrentSaveId(saveId)
+      setShowSaveDialog(false)
+      alert('Game saved successfully!')
+    } catch (error) {
+      console.error('Error saving game:', error)
+      alert('Failed to save game. Please try again.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleLoadSaves = async () => {
+    if (!authReady) {
+      alert('Authentication not ready. Please wait a moment.')
+      return
+    }
+
+    try {
+      const saves = await listSaves()
+      setSavedGames(saves)
+      setScreen('load-game')
+    } catch (error) {
+      console.error('Error loading saves:', error)
+      alert('Failed to load saved games.')
+    }
+  }
+
+  const handleLoadGame = async (save: SavedGame) => {
+    try {
+      setGameState({
+        characterName: save.characterName,
+        genre: save.genre as Genre,
+        health: save.health,
+        maxHealth: save.maxHealth,
+        stamina: save.stamina,
+        maxStamina: save.maxStamina,
+        gold: save.gold,
+        inventory: save.inventory,
+        level: save.level
+      })
+      setConversationHistory(save.conversationHistory)
+      setGameLog(save.gameLog)
+      setCurrentSaveId(save.id)
+      setScreen('playing')
+    } catch (error) {
+      console.error('Error loading game:', error)
+      alert('Failed to load game.')
+    }
+  }
+
+  const handleDeleteSave = async (saveId: string, event: React.MouseEvent) => {
+    event.stopPropagation()
+    
+    if (!confirm('Are you sure you want to delete this save?')) {
+      return
+    }
+
+    try {
+      await deleteSave(saveId)
+      const saves = await listSaves()
+      setSavedGames(saves)
+    } catch (error) {
+      console.error('Error deleting save:', error)
+      alert('Failed to delete save.')
     }
   }
 
@@ -266,7 +347,6 @@ Now respond to the player's action as the Game Master.`
   const handleStartGame = () => {
     if (!characterName.trim() || !selectedGenre) return
 
-    // Initialize game state based on genre
     const startingInventory: Record<Genre, string[]> = {
       fantasy: ['Rusty Sword', 'Health Potion'],
       scifi: ['Laser Pistol', 'Med-Kit'],
@@ -302,6 +382,8 @@ Now respond to the player's action as the Game Master.`
       { type: 'system', content: 'What would you like to do?' }
     ])
 
+    setConversationHistory([])
+    setCurrentSaveId(null)
     setScreen('playing')
   }
 
@@ -311,6 +393,18 @@ Now respond to the player's action as the Game Master.`
     setCharacterName('')
     setGameLog([])
     setConversationHistory([])
+    setCurrentSaveId(null)
+  }
+
+  const formatDate = (timestamp: any) => {
+    if (!timestamp?.toDate) return 'Unknown date'
+    const date = timestamp.toDate()
+    return new Intl.DateTimeFormat('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    }).format(date)
   }
 
   // Main Menu Screen
@@ -318,7 +412,6 @@ Now respond to the player's action as the Game Master.`
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 flex items-center justify-center p-4">
         <div className="max-w-md w-full space-y-8">
-          {/* Title */}
           <div className="text-center space-y-3">
             <h1 className="text-5xl md:text-6xl font-bold text-amber-400 tracking-wide">
               Epic Quest
@@ -329,7 +422,6 @@ Now respond to the player's action as the Game Master.`
             </Badge>
           </div>
 
-          {/* Menu Options */}
           <Card className="bg-slate-800/50 border-slate-700">
             <CardContent className="pt-6 space-y-3">
               <Button
@@ -341,19 +433,95 @@ Now respond to the player's action as the Game Master.`
               </Button>
               
               <Button
-                disabled
-                className="w-full bg-slate-700 text-slate-400 py-6 text-lg cursor-not-allowed"
+                onClick={handleLoadSaves}
+                disabled={!authReady}
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white py-6 text-lg"
               >
-                <Save className="mr-2" size={24} />
+                <Download className="mr-2" size={24} />
                 Load Saved Game
-                <Badge className="ml-2 bg-slate-600">Coming in Step 7</Badge>
               </Button>
             </CardContent>
           </Card>
 
-          {/* Footer */}
           <div className="text-center text-slate-500 text-sm">
-            Step 2 Complete: Claude AI Integration ✓
+            Step 7 Complete: Firebase Save System ✓
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Load Game Screen
+  if (screen === 'load-game') {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-4 md:p-8">
+        <div className="max-w-4xl mx-auto space-y-6">
+          <div className="flex items-center justify-between">
+            <Button
+              onClick={handleBackToMenu}
+              variant="ghost"
+              className="text-slate-400 hover:text-white"
+            >
+              <ArrowLeft className="mr-2" size={20} />
+              Back to Menu
+            </Button>
+          </div>
+
+          <div className="text-center space-y-2">
+            <h2 className="text-4xl font-bold text-amber-400">Load Game</h2>
+            <p className="text-slate-400">Choose a saved game to continue your adventure</p>
+          </div>
+
+          <div className="space-y-4">
+            {savedGames.length === 0 ? (
+              <Card className="bg-slate-800/50 border-slate-700">
+                <CardContent className="pt-6 text-center text-slate-400">
+                  <p>No saved games found.</p>
+                  <p className="text-sm mt-2">Start a new adventure to create your first save!</p>
+                </CardContent>
+              </Card>
+            ) : (
+              savedGames.map((save) => {
+                const genreData = genres.find(g => g.id === save.genre)
+                const Icon = genreData?.icon || Sparkles
+
+                return (
+                  <Card
+                    key={save.id}
+                    onClick={() => handleLoadGame(save)}
+                    className="bg-slate-800/50 border-slate-700 cursor-pointer hover:border-amber-500 hover:shadow-lg hover:shadow-amber-500/20 transition-all"
+                  >
+                    <CardContent className="pt-6">
+                      <div className="flex items-start justify-between">
+                        <div className="flex gap-4 flex-1">
+                          <div className={`w-12 h-12 rounded-lg bg-gradient-to-br ${genreData?.color} flex items-center justify-center flex-shrink-0`}>
+                            <Icon className="text-white" size={24} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <h3 className="text-xl font-bold text-amber-400">{save.characterName}</h3>
+                            <p className="text-slate-400 text-sm">{genreData?.name} • Level {save.level}</p>
+                            <div className="mt-2 flex gap-4 text-sm text-slate-300">
+                              <span>❤️ {save.health}/{save.maxHealth}</span>
+                              <span>⚡ {save.stamina}/{save.maxStamina}</span>
+                              <span>💰 {save.gold}</span>
+                            </div>
+                            <p className="text-slate-500 text-xs mt-2">Saved: {formatDate(save.savedAt)}</p>
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={(e) => handleDeleteSave(save.id, e)}
+                          className="text-red-400 hover:text-red-300 hover:bg-red-950"
+                        >
+                          <Trash2 size={18} />
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
+              })
+            )}
           </div>
         </div>
       </div>
@@ -365,7 +533,6 @@ Now respond to the player's action as the Game Master.`
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-4 md:p-8">
         <div className="max-w-6xl mx-auto space-y-6">
-          {/* Header */}
           <div className="flex items-center justify-between">
             <Button
               onClick={handleBackToMenu}
@@ -382,7 +549,6 @@ Now respond to the player's action as the Game Master.`
             <p className="text-slate-400">Select the type of adventure you'd like to experience</p>
           </div>
 
-          {/* Genre Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {genres.map((genre) => {
               const Icon = genre.icon
@@ -420,7 +586,6 @@ Now respond to the player's action as the Game Master.`
     return (
       <div className="min-h-screen bg-gradient-to-b from-slate-900 via-slate-800 to-slate-900 p-4 flex items-center justify-center">
         <div className="max-w-md w-full space-y-6">
-          {/* Header */}
           <div className="flex items-center justify-between">
             <Button
               onClick={() => setScreen('genre-selection')}
@@ -492,13 +657,24 @@ Now respond to the player's action as the Game Master.`
               {genres.find(g => g.id === gameState.genre)?.name} • Level {gameState.level}
             </p>
           </div>
-          <Button
-            onClick={handleBackToMenu}
-            variant="outline"
-            className="border-slate-700 text-slate-300 hover:text-white"
-          >
-            Menu
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              onClick={() => setShowSaveDialog(true)}
+              variant="outline"
+              className="border-slate-700 text-slate-300 hover:text-white"
+              disabled={!authReady}
+            >
+              <SaveIcon className="mr-2" size={18} />
+              Save
+            </Button>
+            <Button
+              onClick={handleBackToMenu}
+              variant="outline"
+              className="border-slate-700 text-slate-300 hover:text-white"
+            >
+              Menu
+            </Button>
+          </div>
         </div>
 
         {/* Player Stats */}
@@ -653,9 +829,49 @@ Now respond to the player's action as the Game Master.`
 
         {/* Footer */}
         <div className="text-center text-slate-500 text-sm">
-          Step 2 Complete: Claude AI Integration ✓ | Next: Voice Control
+          Step 7 Complete: Firebase Save System ✓ | Next: Voice Control
         </div>
       </div>
+
+      {/* Save Dialog */}
+      <Dialog open={showSaveDialog} onOpenChange={setShowSaveDialog}>
+        <DialogContent className="bg-slate-800 border-slate-700 text-white">
+          <DialogHeader>
+            <DialogTitle className="text-amber-400">Save Game</DialogTitle>
+            <DialogDescription className="text-slate-400">
+              {currentSaveId 
+                ? 'Update your existing save or create a new one?'
+                : 'Your game will be saved to the cloud.'}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <Button
+              onClick={handleSaveGame}
+              disabled={isSaving}
+              className="w-full bg-amber-600 hover:bg-amber-700"
+            >
+              {isSaving ? (
+                <>
+                  <Loader2 className="mr-2 animate-spin" size={18} />
+                  Saving...
+                </>
+              ) : (
+                <>
+                  <SaveIcon className="mr-2" size={18} />
+                  {currentSaveId ? 'Update Save' : 'Save Game'}
+                </>
+              )}
+            </Button>
+            <Button
+              onClick={() => setShowSaveDialog(false)}
+              variant="outline"
+              className="w-full border-slate-700"
+            >
+              Cancel
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
