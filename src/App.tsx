@@ -113,6 +113,8 @@ function App() {
   const [speechRate, setSpeechRate] = useState(1.0)
   const [showSettings, setShowSettings] = useState(false)
   const [drivingMode, setDrivingMode] = useState(false)
+  const [availableVoices, setAvailableVoices] = useState<SpeechSynthesisVoice[]>([])
+  const [selectedVoice, setSelectedVoice] = useState<SpeechSynthesisVoice | null>(null)
   
   const recognitionRef = useRef<any>(null)
   const synthRef = useRef<SpeechSynthesis | null>(null)
@@ -142,6 +144,51 @@ function App() {
   useEffect(() => {
     if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
       synthRef.current = window.speechSynthesis
+      
+      // Load voices
+      const loadVoices = () => {
+        const voices = window.speechSynthesis.getVoices()
+        setAvailableVoices(voices)
+        
+        // Try to find Australian male voice
+        // Priority order: Australian English male > Any English male > Default
+        const australianMale = voices.find(v => 
+          v.lang.includes('en-AU') && v.name.toLowerCase().includes('male')
+        )
+        
+        const australianVoice = voices.find(v => 
+          v.lang.includes('en-AU')
+        )
+        
+        const englishMale = voices.find(v => 
+          v.lang.startsWith('en') && 
+          (v.name.toLowerCase().includes('male') || 
+           v.name.toLowerCase().includes('daniel') ||
+           v.name.toLowerCase().includes('james'))
+        )
+        
+        const deeperVoice = voices.find(v =>
+          v.lang.startsWith('en') &&
+          (v.name.toLowerCase().includes('daniel') ||
+           v.name.toLowerCase().includes('arthur') ||
+           v.name.toLowerCase().includes('gordon'))
+        )
+        
+        // Select best available voice
+        const bestVoice = australianMale || australianVoice || deeperVoice || englishMale || voices[0]
+        setSelectedVoice(bestVoice)
+        
+        console.log('Available voices:', voices.length)
+        console.log('Selected voice:', bestVoice?.name, bestVoice?.lang)
+      }
+      
+      // Load voices immediately
+      loadVoices()
+      
+      // Also load when voices change (some browsers load them async)
+      if (window.speechSynthesis.onvoiceschanged !== undefined) {
+        window.speechSynthesis.onvoiceschanged = loadVoices
+      }
     }
   }, [])
 
@@ -364,9 +411,19 @@ function App() {
     synthRef.current.cancel()
 
     const utterance = new SpeechSynthesisUtterance(text)
-    utterance.rate = speechRate
-    utterance.pitch = 1
+    
+    // Use selected voice if available
+    if (selectedVoice) {
+      utterance.voice = selectedVoice
+    }
+    
+    // Better quality settings for less robotic sound
+    utterance.rate = speechRate // User-controlled speed
+    utterance.pitch = 0.9 // Slightly lower pitch for deeper voice
     utterance.volume = 1
+    
+    // Add natural pauses at punctuation
+    // The browser's TTS engine will handle this better with proper punctuation
 
     synthRef.current.speak(utterance)
   }
@@ -772,6 +829,7 @@ Create an immersive opening scene that:
 4. Ends with what ${characterName} can do or where they can go
 
 Keep it engaging but concise (a couple sentences-2 paragraphs max). Make the player feel immediately immersed in the world.`
+
 
       const response = await fetch("/api/claude", {
         method: "POST",
@@ -1388,6 +1446,30 @@ Keep it engaging but concise (a couple sentences-2 paragraphs max). Make the pla
                 disabled={!synthRef.current}
               />
             </div>
+
+            {/* Voice Selection */}
+            {speechEnabled && availableVoices.length > 0 && (
+              <div className="space-y-2">
+                <Label className="text-slate-200">Narrator Voice</Label>
+                <select
+                  value={selectedVoice?.name || ''}
+                  onChange={(e) => {
+                    const voice = availableVoices.find(v => v.name === e.target.value)
+                    setSelectedVoice(voice || null)
+                  }}
+                  className="w-full bg-slate-900 border border-slate-700 rounded-md px-3 py-2 text-white text-sm"
+                >
+                  {availableVoices.map((voice) => (
+                    <option key={voice.name} value={voice.name}>
+                      {voice.name} ({voice.lang})
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-slate-400">
+                  Current: {selectedVoice?.name || 'Default'} - {selectedVoice?.lang || 'en-US'}
+                </p>
+              </div>
+            )}
 
             {/* Driving Mode Info */}
             <div className="pt-4 border-t border-slate-700">
