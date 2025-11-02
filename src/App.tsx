@@ -715,7 +715,7 @@ Now respond to the player's action as the Game Master.`
     setScreen('character-creation')
   }
 
-  const handleStartGame = () => {
+  const handleStartGame = async () => {
     if (!characterName.trim() || !selectedGenre) return
 
     const startingInventory: Record<Genre, string[]> = {
@@ -727,16 +727,7 @@ Now respond to the player's action as the Game Master.`
       cyberpunk: ['Data Pad', 'Stim Pack']
     }
 
-    const welcomeMessages: Record<Genre, string> = {
-      fantasy: `Welcome, ${characterName}! Your adventure begins in the kingdom of Eldoria, where ancient magic still flows through the land...`,
-      scifi: `Greetings, Captain ${characterName}. Your ship has just docked at Station Meridian, on the edge of known space...`,
-      mystery: `Detective ${characterName}, you've been called to investigate a peculiar case in the foggy streets of New Haven...`,
-      horror: `${characterName}... you shouldn't have come here. But it's too late to turn back now. The mansion looms before you...`,
-      'post-apocalyptic': `${characterName}, you wake up in the ruins of what was once a great city. The world has changed, and so must you...`,
-      cyberpunk: `Welcome to Neo-Tokyo, ${characterName}. In this city of neon and shadows, everyone has secrets...`
-    }
-
-    setGameState({
+    const newGameState = {
       characterName,
       genre: selectedGenre,
       health: 100,
@@ -746,16 +737,86 @@ Now respond to the player's action as the Game Master.`
       gold: 50,
       inventory: startingInventory[selectedGenre],
       level: 1
-    })
+    }
 
-    setGameLog([
-      { type: 'system', content: welcomeMessages[selectedGenre] },
-      { type: 'system', content: 'What would you like to do?' }
-    ])
-
+    setGameState(newGameState)
     setConversationHistory([])
     setCurrentSaveId(null)
     setScreen('playing')
+    setIsLoading(true)
+
+    // Show loading message
+    setGameLog([
+      { type: 'system', content: 'The Game Master is preparing your adventure...' }
+    ])
+
+    try {
+      const genreData = genres.find(g => g.id === selectedGenre)
+      
+      // Create opening prompt for Claude
+      const openingPrompt = `You are the Game Master starting a new ${genreData?.name} RPG adventure.
+
+The player's character is named ${characterName}.
+
+STARTING STATE:
+- Health: 100/100
+- Stamina: 100/100
+- Gold: 50
+- Level: 1
+- Starting Inventory: ${startingInventory[selectedGenre].join(', ')}
+
+Create an immersive opening scene that:
+1. Introduces the world and setting in the ${genreData?.name} genre
+2. Describes where ${characterName} is and what they see/hear/feel
+3. Sets up the initial situation or hook for the adventure
+4. Ends with what ${characterName} can do or where they can go
+
+Keep it engaging but concise (a couple sentences-3 paragraphs max). Make the player feel immediately immersed in the world.`
+
+      const response = await fetch("/api/claude", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "claude-sonnet-4-20250514",
+          max_tokens: 1000,
+          system: "You are an expert Game Master for tabletop RPGs. Create vivid, immersive opening scenes that hook players immediately.",
+          messages: [
+            { role: 'user', content: openingPrompt }
+          ]
+        })
+      })
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`)
+      }
+
+      const data = await response.json()
+      const openingScene = data.content[0].text
+
+      // Set the opening scene as the first message
+      setGameLog([
+        { type: 'assistant', content: openingScene }
+      ])
+
+      // Add to conversation history
+      setConversationHistory([
+        { role: 'user', content: openingPrompt },
+        { role: 'assistant', content: openingScene }
+      ])
+
+    } catch (error) {
+      console.error("Error generating opening:", error)
+      
+      // Fallback to a generic message if API fails
+      const genreData = genres.find(g => g.id === selectedGenre)
+      setGameLog([
+        { type: 'assistant', content: `Welcome, ${characterName}! Your ${genreData?.name} adventure begins now. What would you like to do?` }
+      ])
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleBackToMenu = () => {
@@ -1218,7 +1279,7 @@ Now respond to the player's action as the Game Master.`
                 className="bg-slate-900 border-slate-700 text-white placeholder:text-slate-500 min-h-20 resize-none"
                 disabled={isListening}
               />
-              <div className="grid grid-cols-2 sm:flex gap-2">
+              <div className="flex gap-2">
                 {recognitionRef.current && !drivingMode && (
                   <Button
                     onClick={toggleVoiceInput}
@@ -1261,7 +1322,7 @@ Now respond to the player's action as the Game Master.`
                   data-send-command
                   onClick={handleSendCommand}
                   disabled={isLoading || !userInput.trim() || (isListening && !drivingMode)}
-                  className="col-span-2 sm:col-span-1 sm:flex-1 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
+                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
                 >
                   {isLoading ? (
                     <>
