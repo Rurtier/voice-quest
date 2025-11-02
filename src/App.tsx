@@ -511,7 +511,7 @@ RULES:
 4. Track combat, item usage, and resource management
 5. When combat occurs, describe outcomes and update health/stamina accordingly
 6. When items are found, mention them clearly so they can be added to inventory
-7. Keep responses concise but descriptive (a sentence-2 paragraphs max) change length depending on context (in combat, exploring ext.)
+7. Keep responses concise but descriptive (a sentence-2 paragraphs max) change length depending on context (in combat, exploring ext.), prefer shorter unless nessesary to discribe.
 8. Maintain consistency with the current game state
 9. Create a balance between story, exploration, and action
 
