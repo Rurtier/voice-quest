@@ -511,7 +511,7 @@ RULES:
 4. Track combat, item usage, and resource management
 5. When combat occurs, describe outcomes and update health/stamina accordingly
 6. When items are found, mention them clearly so they can be added to inventory
-7. Keep responses concise but descriptive (a sentence-2 paragraphs max)
+7. Keep responses concise but descriptive (a sentence-2 paragraphs max) change length depending on context (in combat, exploring ext.)
 8. Maintain consistency with the current game state
 9. Create a balance between story, exploration, and action
 
@@ -771,7 +771,7 @@ Create an immersive opening scene that:
 3. Sets up the initial situation or hook for the adventure
 4. Ends with what ${characterName} can do or where they can go
 
-Keep it engaging but concise (a couple sentences-3 paragraphs max). Make the player feel immediately immersed in the world.`
+Keep it engaging but concise (a couple sentences-2 paragraphs max). Make the player feel immediately immersed in the world.`
 
       const response = await fetch("/api/claude", {
         method: "POST",
