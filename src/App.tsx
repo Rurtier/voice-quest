@@ -511,7 +511,7 @@ RULES:
 4. Track combat, item usage, and resource management
 5. When combat occurs, describe outcomes and update health/stamina accordingly
 6. When items are found, mention them clearly so they can be added to inventory
-7. Keep responses concise but descriptive (2-4 paragraphs max)
+7. Keep responses concise but descriptive (a sentence-2 paragraphs max)
 8. Maintain consistency with the current game state
 9. Create a balance between story, exploration, and action
 
@@ -1218,7 +1218,7 @@ Now respond to the player's action as the Game Master.`
                 className="bg-slate-900 border-slate-700 text-white placeholder:text-slate-500 min-h-20 resize-none"
                 disabled={isListening}
               />
-              <div className="flex gap-2">
+              <div className="grid grid-cols-2 sm:flex gap-2">
                 {recognitionRef.current && !drivingMode && (
                   <Button
                     onClick={toggleVoiceInput}
@@ -1261,7 +1261,7 @@ Now respond to the player's action as the Game Master.`
                   data-send-command
                   onClick={handleSendCommand}
                   disabled={isLoading || !userInput.trim() || (isListening && !drivingMode)}
-                  className="flex-1 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
+                  className="col-span-2 sm:col-span-1 sm:flex-1 bg-amber-600 hover:bg-amber-700 text-white disabled:opacity-50"
                 >
                   {isLoading ? (
                     <>
